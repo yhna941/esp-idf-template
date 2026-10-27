@@ -54,6 +54,45 @@ TEST(SntpPhase, StopReturnsToIdleAndBeginIsNotAlreadyStarted) {
     EXPECT_TRUE(networking::sntp_is_started(networking::SntpPhase::started));
 }
 
+TEST(MqttRelease, FailedStopOrDestroyLeavesThatPhase) {
+    EXPECT_EQ(networking::mqtt_phase_after_release(networking::MqttPhase::started, false, false),
+              networking::MqttPhase::started);
+    EXPECT_EQ(networking::mqtt_phase_after_release(networking::MqttPhase::started, false, true),
+              networking::MqttPhase::started);
+    EXPECT_EQ(networking::mqtt_phase_after_release(networking::MqttPhase::started, true, false),
+              networking::MqttPhase::created);
+    EXPECT_EQ(networking::mqtt_phase_after_release(networking::MqttPhase::started, true, true),
+              networking::MqttPhase::idle);
+    EXPECT_EQ(networking::mqtt_phase_after_release(networking::MqttPhase::created, false, false),
+              networking::MqttPhase::created);
+    EXPECT_EQ(networking::mqtt_phase_after_release(networking::MqttPhase::created, true, true),
+              networking::MqttPhase::idle);
+    EXPECT_EQ(networking::mqtt_phase_after_release(networking::MqttPhase::idle, false, false),
+              networking::MqttPhase::idle);
+}
+
+TEST(SntpRelease, StopReturnsToIdleOnlyWhenTheSessionIsDisabled) {
+    EXPECT_EQ(networking::sntp_phase_after_stop(networking::SntpPhase::started, true),
+              networking::SntpPhase::started);
+    EXPECT_EQ(networking::sntp_phase_after_stop(networking::SntpPhase::started, false),
+              networking::SntpPhase::idle);
+    EXPECT_EQ(networking::sntp_phase_after_stop(networking::SntpPhase::idle, true),
+              networking::SntpPhase::idle);
+}
+
+TEST(TimeWait, ExpiryRestartsTheSessionThenFailsBringup) {
+    constexpr auto wait = networking::network_init_retry_ms;
+    constexpr auto budget = networking::network_time_session_budget;
+    EXPECT_EQ(networking::time_wait_decision(wait - 1, wait, 0, budget),
+              networking::TimeWait::wait);
+    EXPECT_EQ(networking::time_wait_decision(wait, wait, 0, budget),
+              networking::TimeWait::restart_session);
+    EXPECT_EQ(networking::time_wait_decision(wait * 2, wait * 2, 1, budget),
+              networking::TimeWait::fail_bringup);
+    EXPECT_EQ(networking::time_wait_decision(0, wait, budget, budget),
+              networking::TimeWait::fail_bringup);
+}
+
 TEST(ConnectionStopOrder, ReleasesMqttThenTimeThenWifi) {
     ASSERT_EQ(std::size(networking::connection_stop_order), 3U);
     EXPECT_EQ(networking::connection_stop_order[0], networking::ConnectionRole::mqtt);
@@ -143,6 +182,9 @@ class IdleMqtt final : public networking::MqttConnection {
     }
 
     void drop_report() noexcept override {
+    }
+
+    void publish_availability() noexcept override {
     }
 };
 

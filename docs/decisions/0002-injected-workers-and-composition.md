@@ -2,7 +2,8 @@
 
 Component placement and namespaces are refined by [ADR 0003](0003-layered-components.md); the constructor-injection and lifetime policy remains.
 
-Status: accepted
+Status: accepted. The boot-once composition limit is superseded by
+[ADR 0007](0007-service-lifecycle.md).
 
 ## Context
 
@@ -22,5 +23,8 @@ Group constants by owning component rather than a project-wide miscellaneous fil
 
 Workers can be tested without ESP-IDF, and driver selection changes only composition.
 The system has no runtime DI container or hidden service lookup. Borrowed dependency
-lifetimes and bounded calls are mandatory. Current composition is boot-once and
-simulation-only. Distribution and swarm coordination remain separate future work.
+lifetimes and bounded calls are mandatory. Sensor, control, and reporter tasks
+stay boot-lifetime, and the default composition stays simulation-only. The
+network stack is not boot-once; that limit is superseded by
+[ADR 0007](0007-service-lifecycle.md). Distribution and swarm coordination remain
+separate future work.

@@ -1,6 +1,7 @@
 # ADR 0003: Layered components and project-owned composition
 
 Status: accepted. Refines ADR 0002 without changing the constructor-injection policy.
+The one-shot startup limit is superseded by [ADR 0007](0007-service-lifecycle.md).
 
 ## Context
 
@@ -24,6 +25,8 @@ service locators, event buses, or per-state classes without a concrete need.
 This is a source API break. Update includes and qualified names; there are no
 compatibility aliases. Examples, host tests, Unity registration, and tutorials move
 with the API. NVS schema, MQTT topics/payload, disabled outputs, and default
-simulation behavior are unchanged. Startup remains one-shot and boot-lifetime.
+simulation behavior are unchanged. The runtime objects stay boot-lifetime.
+Network startup is not one-shot; that limit is superseded by
+[ADR 0007](0007-service-lifecycle.md).
 The simulation example explicitly reuses `main/device.cpp`; standalone node examples
 own their deployment task settings. Network/hardware acceptance remains unverified.

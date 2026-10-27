@@ -13,8 +13,9 @@ namespace networking {
 
 // Boot-lifetime MQTT adapter. The configuration passed to start() must outlive
 // the client. stop() destroys that client. No command subscription and no
-// offline telemetry backlog. report() may run on the reporter task; start() and
-// stop() run on the network worker. The mutex covers that client pointer.
+// offline telemetry backlog. report() may run on the reporter task; start(),
+// stop(), and publish_availability() run on the network worker. The mutex
+// covers the client pointer. The event callback only stores atomics.
 // A future adapter calls application::CommandIngress::submit and does not write outputs.
 class MqttTelemetry final : public MqttConnection {
     public:
@@ -29,6 +30,8 @@ class MqttTelemetry final : public MqttConnection {
         ++dropped_;
     }
 
+    void publish_availability() noexcept override;
+
     std::uint32_t dropped_reports() const noexcept {
         return dropped_.load();
     }
@@ -39,6 +42,10 @@ class MqttTelemetry final : public MqttConnection {
     std::atomic<esp_mqtt_client_handle_t> client_{nullptr};
     std::atomic<bool> mqtt_up_{false};
     std::atomic<std::uint32_t> dropped_{0};
+    // Bumped by the MQTT task on connect. The network worker publishes once
+    // per value and is the only writer of availability_published_.
+    std::atomic<std::uint32_t> availability_epoch_{0};
+    std::uint32_t availability_published_{0};
     MqttPhase phase_{MqttPhase::idle};
     char telemetry_topic_[160]{};
     char availability_topic_[160]{};

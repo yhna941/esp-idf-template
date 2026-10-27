@@ -24,15 +24,20 @@ class OutputSink {
 
 // Polled by the control worker. Must be non-blocking and must not bypass local safety rules.
 // note_outcome runs after TimedOutput and the output adapter, once per control step.
+// `applied` is that step's acknowledgement. A stop is confirmed only when it is off.
+// The default unknown does not confirm a stop.
 class RequestSource {
     public:
     virtual ~RequestSource() = default;
     virtual bool enable_requested(domain::Milliseconds now) noexcept = 0;
 
-    virtual void note_outcome(bool enabled, bool fault, domain::Milliseconds now) noexcept {
+    virtual void
+    note_outcome(bool enabled, bool fault, domain::Milliseconds now,
+                 domain::AppliedOutput applied = domain::AppliedOutput::unknown) noexcept {
         (void)enabled;
         (void)fault;
         (void)now;
+        (void)applied;
     }
 };
 

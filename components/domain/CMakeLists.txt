@@ -1,4 +1,4 @@
-set(portable_sources "src/timed_output.cpp" "src/command.cpp")
+set(portable_sources "src/timed_output.cpp" "src/command.cpp" "src/boot_health.cpp")
 if(COMMAND idf_component_register)
     idf_component_register(SRCS ${portable_sources}  INCLUDE_DIRS "include")
 else()

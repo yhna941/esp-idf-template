@@ -1,5 +1,7 @@
 #pragma once
 
+#include "domain/types.hpp"
+
 #include <cstdint>
 
 namespace networking {
@@ -92,6 +94,62 @@ constexpr MqttCleanup mqtt_cleanup(MqttPhase phase) noexcept {
 
 constexpr bool sntp_is_started(SntpPhase phase) noexcept {
     return phase == SntpPhase::started;
+}
+
+// A failed call leaves its phase. stop has to succeed before destroy is
+// attempted; a started client whose stop succeeded but whose destroy failed is
+// created, so the next stop does not call stop again.
+constexpr MqttPhase mqtt_phase_after_release(MqttPhase phase, bool stop_succeeded,
+                                             bool destroy_succeeded) noexcept {
+    switch (phase) {
+    case MqttPhase::started:
+        if (!stop_succeeded) {
+            return MqttPhase::started;
+        }
+        if (!destroy_succeeded) {
+            return MqttPhase::created;
+        }
+        return MqttPhase::idle;
+    case MqttPhase::created:
+        if (!destroy_succeeded) {
+            return MqttPhase::created;
+        }
+        return MqttPhase::idle;
+    case MqttPhase::idle:
+        return MqttPhase::idle;
+    }
+    return phase;
+}
+
+// idle only after the SDK session is actually disabled. A stop that leaves the
+// session enabled stays started so begin() will not open another one.
+constexpr SntpPhase sntp_phase_after_stop(SntpPhase phase, bool session_enabled) noexcept {
+    if (phase == SntpPhase::started && !session_enabled) {
+        return SntpPhase::idle;
+    }
+    return phase;
+}
+
+// waiting_for_time on the monotonic clock. sessions_completed counts sessions
+// whose wait already expired. The session still running is not included.
+enum class TimeWait : std::uint8_t {
+    wait,
+    restart_session,
+    fail_bringup
+};
+
+constexpr TimeWait time_wait_decision(domain::Milliseconds now, domain::Milliseconds deadline,
+                                      int sessions_completed, int session_budget) noexcept {
+    if (session_budget <= sessions_completed) {
+        return TimeWait::fail_bringup;
+    }
+    if (now < deadline) {
+        return TimeWait::wait;
+    }
+    if (sessions_completed + 1 >= session_budget) {
+        return TimeWait::fail_bringup;
+    }
+    return TimeWait::restart_session;
 }
 
 } // namespace networking
