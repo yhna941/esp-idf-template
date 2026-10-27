@@ -6,7 +6,9 @@
 namespace networking {
 
 // Wall clock for TLS certificate checks. Local safety does not read this clock.
-// begin() and stop() belong to the network worker.
+// begin() and stop() belong to the network worker. stop() leaves the phase
+// started when the session is still enabled. ready() does not apply the
+// bring-up deadline; NetworkService does that on the monotonic clock.
 class SntpTime final : public NetworkTime {
     public:
     void begin() noexcept override;

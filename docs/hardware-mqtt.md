@@ -114,7 +114,10 @@ MQTT's reconnect interval has per-device startup jitter; Wi-Fi uses exponential
 backoff with jitter. MQTT outbox storage is limited to 4096 bytes.
 
 A failed station or MQTT `start` releases the resources that attempt acquired and
-retries without rebooting. Stopping the network does not stop sensor or control
+retries without rebooting. A wall clock that never becomes valid for TLS does
+the same after a bounded SNTP wait: the session is stopped and begun again, then
+the stack is released. A release the SDK does not finish stays recorded so the
+next stop can retry it. Stopping the network does not stop sensor or control
 tasks and does not change the output. The TCP/IP stack and the default event loop
 stay initialized across that restart. See
 [ADR 0007](decisions/0007-service-lifecycle.md). Hardware was not used to confirm

@@ -99,6 +99,11 @@ opposite order: MQTT, SNTP, then Wi-Fi. A failed `start` releases the resources
 that stage owns. Wi-Fi bring-up failure releases the whole stack and moves to
 `failed`, which `step` retries after `network_init_retry_ms`. MQTT bring-up
 failure releases only the client and retries it, leaving the station and SNTP up.
+`waiting_for_time` is bounded on the monotonic clock. One SNTP session waits
+`network_init_retry_ms`; on expiry `step` stops SNTP and begins it again. After
+`network_time_session_budget` sessions the bring-up fails like a Wi-Fi `start`
+failure. `NetworkTime::ready()` stays a wall-clock check. A failed MQTT or SNTP
+release leaves that phase in place so the next `stop` or `start` can finish it.
 `stopped` does not retry until `start`. Losing the link after a successful start
 is not `failed`; the station and the MQTT client reconnect on their own.
 
@@ -111,10 +116,10 @@ stop the control task as well.
 
 The reporter calls `NetworkService::report()`, which gates transmission on the
 Wi-Fi link and delegates to MQTT. That call may run while the network task is
-stopping. The MQTT adapter serializes use of the client pointer; Wi-Fi and MQTT
-callbacks only update atomics. MQTT's callback also enqueues retained online
-availability. Config strings remain valid because `NetworkService` owns its
-settings for the boot lifetime.
+stopping. The MQTT adapter serializes use of the client pointer. Wi-Fi and MQTT
+callbacks only update atomics. The network worker enqueues retained online
+availability after the callback records a connection. Config strings remain
+valid because `NetworkService` owns its settings for the boot lifetime.
 
 `NetworkService::stop` does not read the sensor and does not change the output.
 A later operation that needs a quiet actuator, including OTA, has to request safe

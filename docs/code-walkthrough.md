@@ -97,9 +97,15 @@ using them.
 If Wi-Fi `start` fails, the service releases every connection it may have touched
 and moves to `failed`. A later `step`, after five seconds, tries again. If MQTT
 `start` fails, only that client is released; Wi-Fi and SNTP stay up and MQTT is
-retried on its own. `stop` moves to `stopped` and does not retry until something
-calls `start`. A link that drops after a successful start is not a lifecycle
-failure: the station and the MQTT client reconnect by themselves.
+retried on its own. TLS waits for a wall clock, but not forever: each SNTP
+session gets the same five seconds, then `step` stops SNTP and begins it again.
+A second expiry takes the Wi-Fi failure path. `stop` moves to `stopped` and does
+not retry until something calls `start`. A link that drops after a successful
+start is not a lifecycle failure: the station and the MQTT client reconnect by
+themselves. If MQTT `stop`/`destroy` or SNTP `stop` does not finish, the phase
+stays where that call failed so the next `stop` or `start` can finish the
+release. The MQTT callback only stores atomics; the network worker publishes
+retained availability.
 
 The objects stay allocated. What `stop` releases are the SDK resources the
 service created: the station netif, the Wi-Fi driver, its event handlers, the
@@ -132,8 +138,9 @@ that can fail partway and must be retryable without rebooting.
 3. `start` returns false only when service-owned resources are already released,
    or when `stop` can still see which phase was reached and finish the release.
 4. `stop` walks those phases backwards and is safe when `start` never ran and
-   safe when it is called again. Leave process-wide resources alone when the SDK
-   cannot deinitialize them or when other services share them.
+   safe when it is called again. If a release call fails, leave that phase in
+   place so the next `stop` or `start` finishes it. Leave process-wide resources
+   alone when the SDK cannot deinitialize them or when other services share them.
 5. Call `start`, `stop`, and `step` from one worker. Do not call them from the
    control worker, and do not stop sensor or control tasks inside `stop`.
 6. Retry a failed start from that worker's `step`, after a monotonic delay. Do

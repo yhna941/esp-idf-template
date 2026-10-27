@@ -15,9 +15,10 @@ Settings tests cover unversioned upgrade, schema 1, a newer schema, corrupt and
 partial records, out-of-range values, and empty optional credentials. They call
 `migrate_settings` directly and do not open NVS.
 Network lifecycle tests cover start order, reverse-order stop, a repeated stop,
-Wi-Fi and MQTT init failure, retry after the monotonic delay, and control
-continuing while the network is stopped. Resource-phase transitions are tested
-without ESP-IDF. The Unity application does not run those cases: SDK teardown
+Wi-Fi and MQTT init failure, retry after the monotonic delay, a stalled SNTP
+wait (separate from the wall-clock `ready()` rule), and control continuing
+while the network is stopped. Resource-phase transitions, including a failed
+MQTT or SNTP release, are tested without ESP-IDF. The Unity application does not run those cases: SDK teardown
 needs a board, and the host tests already cover the portable contract.
 Add domain-specific boundary tests when control rules grow.
 

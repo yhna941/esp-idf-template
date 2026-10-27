@@ -82,11 +82,16 @@ class FakeMqtt final : public networking::MqttConnection {
         ++drops;
     }
 
+    void publish_availability() noexcept override {
+        ++availability_publishes;
+    }
+
     std::vector<std::string>* trace{nullptr};
     int starts{0};
     int stops{0};
     int reports{0};
     int drops{0};
+    int availability_publishes{0};
     bool succeeds{true};
     bool holding{false};
 };
@@ -179,6 +184,89 @@ TEST_F(NetworkServiceTest, TlsWaitsForWifiAndTimeAndKeepsServicingReconnects) {
     EXPECT_EQ(wifi.starts, 1);
     EXPECT_EQ(mqtt.starts, 1);
     EXPECT_EQ(wifi.stops, 0);
+    EXPECT_EQ(time.begins, 1);
+    EXPECT_EQ(time.stops, 0);
+}
+
+TEST_F(NetworkServiceTest, TimeSyncStallRestartsSntpThenFailsLikeWifiBringup) {
+    service.configure(config);
+    service.step();
+    wifi.online = true;
+    service.step();
+    ASSERT_EQ(service.state(), networking::NetworkState::waiting_for_time);
+    EXPECT_EQ(time.begins, 1);
+    EXPECT_EQ(time.stops, 0);
+    EXPECT_EQ(mqtt.starts, 0);
+
+    clock.time = networking::network_init_retry_ms - 1;
+    service.step();
+    EXPECT_EQ(service.state(), networking::NetworkState::waiting_for_time);
+    EXPECT_EQ(time.begins, 1);
+    EXPECT_TRUE(wifi.holding);
+
+    clock.time = networking::network_init_retry_ms;
+    service.step();
+    EXPECT_EQ(service.state(), networking::NetworkState::waiting_for_time);
+    EXPECT_EQ(time.stops, 1);
+    EXPECT_EQ(time.begins, 2);
+    EXPECT_TRUE(time.running);
+    EXPECT_EQ(wifi.stops, 0);
+    EXPECT_EQ(mqtt.starts, 0);
+
+    clock.time = networking::network_init_retry_ms * 2 - 1;
+    service.step();
+    EXPECT_EQ(service.state(), networking::NetworkState::waiting_for_time);
+    EXPECT_EQ(time.begins, 2);
+
+    clock.time = networking::network_init_retry_ms * 2;
+    service.step();
+    EXPECT_EQ(service.state(), networking::NetworkState::failed);
+    EXPECT_FALSE(wifi.holding);
+    EXPECT_FALSE(time.running);
+    EXPECT_FALSE(mqtt.holding);
+    EXPECT_EQ(trace.back(), "wifi.stop");
+
+    service.step();
+    EXPECT_EQ(wifi.starts, 1);
+    clock.time = networking::network_init_retry_ms * 3;
+    service.step();
+    EXPECT_EQ(wifi.starts, 2);
+    EXPECT_EQ(time.begins, 3);
+    EXPECT_EQ(service.state(), networking::NetworkState::waiting_for_wifi);
+}
+
+TEST_F(NetworkServiceTest, TimeSyncBudgetDoesNotResetWhenTheLinkDrops) {
+    service.configure(config);
+    service.step();
+    wifi.online = true;
+    service.step();
+    ASSERT_EQ(service.state(), networking::NetworkState::waiting_for_time);
+
+    clock.time = networking::network_init_retry_ms - 1;
+    wifi.online = false;
+    service.step();
+    EXPECT_EQ(service.state(), networking::NetworkState::waiting_for_wifi);
+    EXPECT_EQ(time.stops, 0);
+
+    clock.time = networking::network_init_retry_ms;
+    wifi.online = true;
+    service.step();
+    EXPECT_EQ(service.state(), networking::NetworkState::waiting_for_time);
+    EXPECT_EQ(time.stops, 1);
+    EXPECT_EQ(time.begins, 2);
+    EXPECT_EQ(wifi.stops, 0);
+    EXPECT_EQ(mqtt.starts, 0);
+}
+
+TEST_F(NetworkServiceTest, WorkerPublishesAvailabilityUntilStop) {
+    reach_running();
+    const auto published = mqtt.availability_publishes;
+    EXPECT_GT(published, 0);
+    service.step();
+    EXPECT_EQ(mqtt.availability_publishes, published + 1);
+    service.stop();
+    service.step();
+    EXPECT_EQ(mqtt.availability_publishes, published + 1);
 }
 
 TEST_F(NetworkServiceTest, PlaintextDoesNotRequireTimeSynchronization) {
