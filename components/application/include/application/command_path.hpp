@@ -69,6 +69,7 @@ class CommandIngress {
 
 // Turns admitted commands into the boolean TimedOutput already consumes.
 // enable_requested and note_outcome are one pair per control step.
+// A latched stop is applied only when that step observed AppliedOutput::off.
 class CommandRequests final : public RequestSource {
     public:
     CommandRequests(BoundedFifo<QueuedCommand>& commands,
@@ -77,7 +78,9 @@ class CommandRequests final : public RequestSource {
                     domain::Milliseconds max_run_ms) noexcept;
 
     bool enable_requested(domain::Milliseconds now) noexcept override;
-    void note_outcome(bool enabled, bool fault, domain::Milliseconds now) noexcept override;
+    void
+    note_outcome(bool enabled, bool fault, domain::Milliseconds now,
+                 domain::AppliedOutput applied = domain::AppliedOutput::unknown) noexcept override;
     std::uint32_t dropped_results() const noexcept;
 
     private:

@@ -105,7 +105,9 @@ stop enqueueing before the driver is gone.
 
 Network `stop` is not output quiescing. It must not call `OutputSink` or the
 command ingress. A future OTA or maintenance restart that needs a safe actuator
-belongs to the composition root, in this order, and is not implemented here:
+belongs to the composition root, in this order.
+[ADR 0008](0008-output-quiesce.md) is that check. Network `stop` still does not
+perform it:
 
 1. Admit a local stop through the existing command path so `TimedOutput` releases
    the output.

@@ -12,7 +12,7 @@ mirror their owning namespace. Check for SDK component collisions when adding na
 | Component | Namespace | Responsibility |
 | --- | --- | --- |
 | `domain` | `domain` | Measurements, status, timed-output policy, and command checks |
-| `application` | `application` | Portable ports, command ingress, and single-step workers |
+| `application` | `application` | Portable ports, command ingress, output quiesce, and single-step workers |
 | `drivers` | `drivers` | Synthetic/SHT3x inputs and simulated output |
 | `platform` | `platform` | ESP-IDF I2C, monotonic clock, FreeRTOS queues/tasks, log sink |
 | `configuration` | `configuration` | Network settings validation, schema migration, and NVS loading |
@@ -60,6 +60,7 @@ This is a lightweight boundary check, not a general C++ dependency analyzer.
 | Producer-consumer | Bounded latest-value queues connect workers |
 | Bounded FIFO with rejection | Command ingress returns a status instead of overwriting or blocking |
 | Separate stop mailbox | A full command FIFO cannot delay `CommandType::stop` |
+| Output quiesce | One local stop, then poll applied output before a disruptive restart |
 | In-memory schema migration | `migrate_settings` upgrades stored network fields without rewriting NVS |
 
 No DI container, service locator, Singleton, generic event bus, or factory hierarchy
@@ -117,21 +118,25 @@ availability. Config strings remain valid because `NetworkService` owns its
 settings for the boot lifetime.
 
 `NetworkService::stop` does not read the sensor and does not change the output.
-A later operation that needs a quiet actuator, including OTA, has to request safe
-OFF through the command path and observe the applied status first. A failed OFF
-stays unknown. That quiesce sequence is not implemented here. Control never calls
-networking. Telemetry uses bounded nonblocking enqueue with QoS 0 and no offline
-backlog. Sensor bus waits remain on the sensor task. Task budgets require hardware
-measurement; compilation is not timing validation.
+`application::OutputQuiesce` submits one local stop and polls `applied_output`.
+Only a sample newer than that submit, reading `off`, is a confirmed safe output.
+`unknown`, a sample that is still `on`, and a deadline without that sample are
+unsuccessful. The helper does not call network `stop` or OTA, and boot does not
+call the helper. See [ADR 0008](decisions/0008-output-quiesce.md). Control never
+calls networking. Telemetry uses bounded nonblocking enqueue with QoS 0 and no
+offline backlog. Sensor bus waits remain on the sensor task. Task budgets require
+hardware measurement; compilation is not timing validation.
 
 ## Safety and status
 
 `TimedOutput` rejects invalid/stale input and maximum runtime expiry, latching a
 fault. Repeated ON requests cannot extend an interval. The worker applies the
 policy decision; output errors latch fault and trigger a best-effort OFF. Failed
-OFF is reported as unknown, not confirmed OFF. Applied status is software
-acknowledgement, not physical feedback. Cooldowns, duty limits, independent
-interlocks, and hardware watchdog behavior are product responsibilities.
+OFF is reported as unknown, not confirmed OFF. A latched stop is `applied` only
+when that step observed `off`. Applied status is software acknowledgement, not
+physical feedback. Cooldowns, duty limits, independent interlocks, and hardware
+watchdog behavior are product responsibilities. See
+[ADR 0008](decisions/0008-output-quiesce.md).
 
 Physical outputs remain disabled. Remote command sources stay rejected unless
 `ESPKIT_REMOTE_COMMANDS` is enabled, and that option does not subscribe to MQTT.

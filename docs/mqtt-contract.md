@@ -51,7 +51,10 @@ Admission statuses are `accepted`, `rejected_invalid`, `rejected_expired`,
 `rejected_duplicate`, `rejected_stale_sequence`, `rejected_unauthorized`, and
 `rejected_full`. After the control loop runs, a queued command is `applied`,
 `not_applied`, `expired_before_apply`, `dropped_by_stop`, or `superseded`.
-`accepted` does not mean the output turned on. `TimedOutput` can still refuse.
+`accepted` does not mean the output turned on, and it does not mean a stop left
+the output off. A stop is `applied` only after the control step observes
+`AppliedOutput::off`. `unknown` and `on` are `not_applied`. See
+[ADR 0008](decisions/0008-output-quiesce.md). `TimedOutput` can still refuse.
 
 ## Commands
 

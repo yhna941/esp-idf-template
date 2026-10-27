@@ -10,7 +10,11 @@ snapshots, request sources, and failed outputs. They verify missing/stale input,
 fault propagation, failed-stop unknown state, and reporting without ESP-IDF.
 Command tests cover a full queue, invalid and expired commands, duplicates,
 stale sequences, remote rejection, stop while the FIFO is full, and commands
-that cannot override a `TimedOutput` fault.
+that cannot override a `TimedOutput` fault. A stop is `applied` only when the
+control step observed `off`. Quiesce tests submit one local stop and poll
+applied output. They confirm only a newer `off` sample. `unknown`, a sample
+that is still `on`, a deadline, a rejected stop, and an overwritten stop's bare
+`accepted` result are not safe. The helper does not call network `stop` or OTA.
 Settings tests cover unversioned upgrade, schema 1, a newer schema, corrupt and
 partial records, out-of-range values, and empty optional credentials. They call
 `migrate_settings` directly and do not open NVS.

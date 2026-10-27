@@ -54,6 +54,17 @@ calls `OutputSink` itself.
 generation counter, and the next control step throws away queued commands that
 were admitted before that generation. A later, new command can still be accepted.
 Retransmitting an id that was already accepted cannot start the output again.
+The control loop records that stop as `applied` only when the step observed
+`AppliedOutput::off`. `unknown` and `on` are `not_applied`. A newer stop can
+replace the notice before that loop runs. The replaced command stays `accepted`
+and has no completion record. `accepted` is not a confirmed OFF.
+
+`application::OutputQuiesce` submits one local stop and then polls
+`Telemetry.applied_output`. It confirms the output only when a sample newer than
+that submit reads `off`. `unknown`, a sample that is still `on`, and a deadline
+with no such `off` are unsuccessful. The helper does not stop the network and
+does not call OTA. The root firmware does not call it. See
+[ADR 0008](decisions/0008-output-quiesce.md).
 
 The root firmware constructs this path and does not call `submit`. MQTT does not
 subscribe. A future network adapter should parse a bounded payload, convert a
@@ -111,9 +122,9 @@ returned false.
 The reporter logs status and attempts a bounded telemetry enqueue. Offline
 reports are dropped; reconnection does not replay old measurements. Sensor and
 control tasks do not call this code. Stopping the network does not turn an
-output off. A future OTA path has to request safe OFF through the command path
-and see an off (or unknown, if OFF failed) status before it reboots. That path
-is not implemented.
+output off. Before a disruptive restart, `OutputQuiesce` has to observe `off`.
+`unknown` means OFF failed and is not a safe state. The helper does not reboot
+and does not stop the network. OTA download is not implemented.
 
 Real board timing, live broker outages, and physical safety still require the
 [hardware acceptance checks](hardware-mqtt.md). Host tests cover the transitions.
@@ -138,8 +149,8 @@ that can fail partway and must be retryable without rebooting.
    control worker, and do not stop sensor or control tasks inside `stop`.
 6. Retry a failed start from that worker's `step`, after a monotonic delay. Do
    not tight-loop, and do not reboot.
-7. If a later operation needs the actuator off, request that through the command
-   path first. Network `stop` is not output quiescing.
+7. If a later operation needs the actuator off, call `OutputQuiesce` and continue
+   only on `confirmed_off`. Network `stop` is not output quiescing.
 8. Add host tests for the phase order, a failed start, a second `stop`, and a
    restart. Keep the ESP-IDF calls out of those tests.
 
@@ -153,6 +164,7 @@ that can fail partway and must be retryable without rebooting.
 | Add a portable driver | `components/drivers/` |
 | Change local safety rules | `components/domain/` and host tests |
 | Change command admission or add a command type | `domain/command.hpp`, `application/command_path.hpp`, and host tests |
+| Confirm output is off before a restart | `application/output_quiesce.hpp` and host tests |
 | Subscribe to remote commands later | `components/networking/`, calling `CommandIngress::submit` |
 | Change MQTT encoding/connection | `components/networking/` |
 | Add a runtime network or identity setting | `configuration/network_config.hpp`, `settings_migration.hpp`, `NvsConfigStore`, and `tools/provision_device.py` |
