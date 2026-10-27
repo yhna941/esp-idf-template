@@ -27,7 +27,9 @@ void ControlWorker::step() noexcept {
         }
     }
     const bool output_on = enabled && error == domain::OutputError::none;
-    requests_.note_outcome(output_on, policy_.fault(), now);
+    // The boolean level is false for both a successful OFF and a failed OFF.
+    // The applied acknowledgement is what keeps a failed OFF unconfirmed.
+    requests_.note_outcome(output_on, policy_.fault(), now, applied);
     telemetry_.publish({now, requested, applied, policy_.fault(), error, reading});
 }
 

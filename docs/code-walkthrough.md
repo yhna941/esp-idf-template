@@ -54,10 +54,24 @@ calls `OutputSink` itself.
 generation counter, and the next control step throws away queued commands that
 were admitted before that generation. A later, new command can still be accepted.
 Retransmitting an id that was already accepted cannot start the output again.
+The control loop records that stop as `applied` only when the step observed
+`AppliedOutput::off`. `unknown` and `on` are `not_applied`. A newer stop can
+replace the notice before that loop runs. The replaced command stays `accepted`
+and has no completion record. `accepted` is not a confirmed OFF.
+
+`application::OutputQuiesce` submits one local stop and then polls
+`Telemetry.applied_output`. It confirms the output only when a sample newer than
+that submit reads `off`. `unknown`, a sample that is still `on`, and a deadline
+with no such `off` are unsuccessful. The helper does not stop the network and
+does not call OTA. The root firmware does not call it. See
+[ADR 0008](decisions/0008-output-quiesce.md).
 
 The root firmware constructs this path and does not call `submit`. MQTT does not
-subscribe. A future network adapter should parse a bounded payload, convert a
-trusted deadline into monotonic time, and call `submit` from one task.
+subscribe. `networking::decode_command_envelope` parses one bounded schema 1
+payload, converts a trusted wall-clock deadline into monotonic time, and calls
+`submit` with `CommandSource::remote`. Call that decoder from the same single
+thread that owns `submit`, after reassembly. A full result FIFO rejects a new
+enable. Subscription is still a later adapter.
 
 ### Add a command type later
 
@@ -97,9 +111,15 @@ using them.
 If Wi-Fi `start` fails, the service releases every connection it may have touched
 and moves to `failed`. A later `step`, after five seconds, tries again. If MQTT
 `start` fails, only that client is released; Wi-Fi and SNTP stay up and MQTT is
-retried on its own. `stop` moves to `stopped` and does not retry until something
-calls `start`. A link that drops after a successful start is not a lifecycle
-failure: the station and the MQTT client reconnect by themselves.
+retried on its own. TLS waits for a wall clock, but not forever: each SNTP
+session gets the same five seconds, then `step` stops SNTP and begins it again.
+A second expiry takes the Wi-Fi failure path. `stop` moves to `stopped` and does
+not retry until something calls `start`. A link that drops after a successful
+start is not a lifecycle failure: the station and the MQTT client reconnect by
+themselves. If MQTT `stop`/`destroy` or SNTP `stop` does not finish, the phase
+stays where that call failed so the next `stop` or `start` can finish the
+release. The MQTT callback only stores atomics; the network worker publishes
+retained availability.
 
 The objects stay allocated. What `stop` releases are the SDK resources the
 service created: the station netif, the Wi-Fi driver, its event handlers, the
@@ -111,9 +131,9 @@ returned false.
 The reporter logs status and attempts a bounded telemetry enqueue. Offline
 reports are dropped; reconnection does not replay old measurements. Sensor and
 control tasks do not call this code. Stopping the network does not turn an
-output off. A future OTA path has to request safe OFF through the command path
-and see an off (or unknown, if OFF failed) status before it reboots. That path
-is not implemented.
+output off. Before a disruptive restart, `OutputQuiesce` has to observe `off`.
+`unknown` means OFF failed and is not a safe state. The helper does not reboot
+and does not stop the network. OTA download is not implemented.
 
 Real board timing, live broker outages, and physical safety still require the
 [hardware acceptance checks](hardware-mqtt.md). Host tests cover the transitions.
@@ -132,14 +152,15 @@ that can fail partway and must be retryable without rebooting.
 3. `start` returns false only when service-owned resources are already released,
    or when `stop` can still see which phase was reached and finish the release.
 4. `stop` walks those phases backwards and is safe when `start` never ran and
-   safe when it is called again. Leave process-wide resources alone when the SDK
-   cannot deinitialize them or when other services share them.
+   safe when it is called again. If a release call fails, leave that phase in
+   place so the next `stop` or `start` finishes it. Leave process-wide resources
+   alone when the SDK cannot deinitialize them or when other services share them.
 5. Call `start`, `stop`, and `step` from one worker. Do not call them from the
    control worker, and do not stop sensor or control tasks inside `stop`.
 6. Retry a failed start from that worker's `step`, after a monotonic delay. Do
    not tight-loop, and do not reboot.
-7. If a later operation needs the actuator off, request that through the command
-   path first. Network `stop` is not output quiescing.
+7. If a later operation needs the actuator off, call `OutputQuiesce` and continue
+   only on `confirmed_off`. Network `stop` is not output quiescing.
 8. Add host tests for the phase order, a failed start, a second `stop`, and a
    restart. Keep the ESP-IDF calls out of those tests.
 
@@ -153,7 +174,9 @@ that can fail partway and must be retryable without rebooting.
 | Add a portable driver | `components/drivers/` |
 | Change local safety rules | `components/domain/` and host tests |
 | Change command admission or add a command type | `domain/command.hpp`, `application/command_path.hpp`, and host tests |
-| Subscribe to remote commands later | `components/networking/`, calling `CommandIngress::submit` |
+| Confirm output is off before a restart | `application/output_quiesce.hpp` and host tests |
+| Decode a remote command payload | `networking/command_envelope.hpp`, then `CommandIngress::submit` |
+| Subscribe to remote commands later | `components/networking/`, calling `decode_command_envelope` |
 | Change MQTT encoding/connection | `components/networking/` |
 | Add a runtime network or identity setting | `configuration/network_config.hpp`, `settings_migration.hpp`, `NvsConfigStore`, and `tools/provision_device.py` |
 | Change network start, stop, or retry | `networking/lifecycle.hpp`, `network_service.cpp`, and the adapter `stop` path |

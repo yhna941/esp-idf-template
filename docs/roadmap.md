@@ -21,8 +21,9 @@ Keep smart-farm rules out of reusable networking and hardware components.
 Wi-Fi and MQTT telemetry are implemented as opt-in services. A failed or partial
 start can be released and retried, and the stack can be stopped, without
 rebooting local control. Local command validation and the bounded command queue
-are in the portable ingress. Next add an MQTT subscription that calls that
-ingress, TLS, and integration tests. Do not add dependencies until used; then
+are in the portable ingress. A bounded schema 1 decoder calls that ingress
+and does not subscribe. Next add an MQTT subscription that calls the decoder,
+TLS, and integration tests. Do not add dependencies until used; then
 commit the managed dependency lockfile. Pin versions compatible with the chosen
 SDK baseline.
 
@@ -41,10 +42,12 @@ credentials.
 
 ## OTA and fleet operation
 
-Add HTTPS OTA, image verification, board/version compatibility checks, safe output
-quiescing, and local health confirmation/rollback. Do not require broker availability
-to mark a healthy device valid. The current partition table reserves two app slots;
-it does not implement updates. Budget image size against each slot.
+Add HTTPS OTA, image verification, board/version compatibility checks, and local
+health confirmation/rollback. Portable output quiesce confirmation is in place
+([ADR 0008](decisions/0008-output-quiesce.md)); it is not wired to a download or
+a reboot. Do not require broker availability to mark a healthy device valid. The
+current partition table reserves two app slots; it does not implement updates.
+Budget image size against each slot.
 
 Add release manifests, device identity, diagnostics, staged rollout, certificate
 rotation, and backend fleet inventory. A firmware template alone is not a fleet

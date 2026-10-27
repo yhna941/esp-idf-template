@@ -1,4 +1,4 @@
-set(portable_sources "src/workers.cpp" "src/command_path.cpp")
+set(portable_sources "src/workers.cpp" "src/command_path.cpp" "src/output_quiesce.cpp")
 if(COMMAND idf_component_register)
     idf_component_register(SRCS ${portable_sources}  INCLUDE_DIRS "include" REQUIRES domain)
 else()

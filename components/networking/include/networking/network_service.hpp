@@ -7,12 +7,19 @@ namespace networking {
 
 // How long step() waits before repeating a failed start.
 // Link loss after a successful start uses WifiStation's own backoff instead.
+// waiting_for_time also uses this as the length of one SNTP session.
 inline constexpr domain::Milliseconds network_init_retry_ms = 5000;
+
+// SNTP sessions waiting_for_time may start before the bring-up fails like a
+// Wi-Fi start. The first expiry stops SNTP and begins again. The next expiry
+// releases the stack and enters failed.
+inline constexpr int network_time_session_budget = 2;
 
 // disabled has no configuration. stopped keeps the owned copy and does not
 // retry. failed keeps that copy, has released resources, and step() retries
-// after network_init_retry_ms. Link loss while running is not failed: the
-// station and the MQTT client reconnect on their own.
+// after network_init_retry_ms. A stalled wall clock reaches failed the same
+// way. Link loss while running is not failed: the station and the MQTT client
+// reconnect on their own.
 enum class NetworkState {
     disabled,
     starting,
@@ -55,6 +62,9 @@ class NetworkService final : public application::Work, public application::Telem
     private:
     void release() noexcept;
     void fail_bringup() noexcept;
+    void clear_time_wait() noexcept;
+    // Bounds waiting_for_time. Returns after arming, restarting SNTP, or failing.
+    void poll_time() noexcept;
 
     WifiConnection& wifi_;
     MqttConnection& mqtt_;
@@ -64,6 +74,9 @@ class NetworkService final : public application::Work, public application::Telem
     NetworkState state_{NetworkState::disabled};
     bool needs_time_{false};
     domain::Milliseconds retry_not_before_{0};
+    bool time_wait_armed_{false};
+    int time_sessions_completed_{0};
+    domain::Milliseconds time_deadline_{0};
 };
 
 } // namespace networking

@@ -33,8 +33,10 @@ static_assert(std::is_trivially_copyable_v<StopNotice>);
 static_assert(std::is_trivially_copyable_v<QueuedCommand>);
 static_assert(std::is_trivially_copyable_v<domain::CommandResult>);
 
-// Single-threaded admission. The FIFO and stop mailbox are the cross-task boundary.
-// Duplicate memory and sequence cursors reset on reboot; they are not stored.
+// Single-threaded admission. Reassemble a remote payload on that same worker
+// before calling submit. The FIFO and stop mailbox are the cross-task boundary.
+// A full result FIFO rejects a new enable. Duplicate memory and sequence cursors
+// reset on reboot; they are not stored.
 class CommandIngress {
     public:
     static constexpr std::size_t duplicate_history = 8;
@@ -69,6 +71,7 @@ class CommandIngress {
 
 // Turns admitted commands into the boolean TimedOutput already consumes.
 // enable_requested and note_outcome are one pair per control step.
+// A latched stop is applied only when that step observed AppliedOutput::off.
 class CommandRequests final : public RequestSource {
     public:
     CommandRequests(BoundedFifo<QueuedCommand>& commands,
@@ -77,7 +80,9 @@ class CommandRequests final : public RequestSource {
                     domain::Milliseconds max_run_ms) noexcept;
 
     bool enable_requested(domain::Milliseconds now) noexcept override;
-    void note_outcome(bool enabled, bool fault, domain::Milliseconds now) noexcept override;
+    void
+    note_outcome(bool enabled, bool fault, domain::Milliseconds now,
+                 domain::AppliedOutput applied = domain::AppliedOutput::unknown) noexcept override;
     std::uint32_t dropped_results() const noexcept;
 
     private:

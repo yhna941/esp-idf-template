@@ -49,10 +49,11 @@ the default firmware calls `submit`, so the output request stays off.
 
 Duplicate ids and sequence cursors live in RAM and reset on reboot. The history
 holds eight ids. After that, only the oldest id is forgotten; a stale sequence
-still rejects a replay. Wall-clock expiry, payload bounds, and caller
-authentication belong to a future transport adapter. That adapter must convert
-a trusted deadline into monotonic `expires_at` and call `submit`. It must not
-call `OutputSink`.
+still rejects a replay. `networking::decode_command_envelope` bounds the payload
+and converts a trusted wall-clock deadline into monotonic `expires_at`, then
+calls `submit` with `CommandSource::remote`. It does not authenticate the caller
+or open a socket. The caller supplies identity and sequence after authentication.
+The decoder must not call `OutputSink`.
 
 ## Alternatives rejected
 
@@ -86,4 +87,10 @@ A command duration must be shorter than `max_run_ms`. The request is released
 before `TimedOutput` treats a still-running output as a fault. A clock jump
 across that limit still faults. Stop completion is recorded for the notice the
 control loop observes; an earlier stop in the same quiet period has already
-returned `accepted` and has advanced the generation. Hardware was not validated.
+returned `accepted` and has advanced the generation. That overwritten stop is
+not given a later completion record. [ADR 0008](0008-output-quiesce.md) states
+why, and why `accepted` is not a confirmed safe output. A stop the control loop
+does observe is `applied` only when that step's applied output is `off`.
+`submit` stays single-threaded: reassemble a remote payload on that worker. A
+full result FIFO rejects a new enable. The decoder does not subscribe. Hardware
+was not validated.

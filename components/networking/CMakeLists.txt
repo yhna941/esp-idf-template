@@ -1,4 +1,4 @@
-set(portable_sources "src/telemetry.cpp" "src/network_service.cpp")
+set(portable_sources "src/telemetry.cpp" "src/command_envelope.cpp" "src/network_service.cpp")
 if(COMMAND idf_component_register)
     idf_component_register(SRCS ${portable_sources} "src/wifi_station.cpp" "src/mqtt_telemetry.cpp" "src/sntp_time.cpp" INCLUDE_DIRS "include" REQUIRES application configuration mqtt esp_event PRIV_REQUIRES esp_netif esp_wifi mbedtls esp_hw_support lwip)
 else()

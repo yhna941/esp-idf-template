@@ -209,7 +209,7 @@ TEST(CommandIngress, RejectsFullQueueWithoutRememberingTheCommand) {
     EXPECT_EQ(path.ingress.submit(command_for(3, 3, 0), 0), domain::CommandStatus::rejected_full);
     EXPECT_EQ(path.commands.size(), 2U);
     path.requests.enable_requested(0);
-    path.requests.note_outcome(true, false, 0);
+    path.requests.note_outcome(true, false, 0, domain::AppliedOutput::on);
     EXPECT_EQ(path.commands.size(), 0U);
     EXPECT_EQ(path.ingress.submit(command_for(3, 3, 0), 0), domain::CommandStatus::accepted);
 }
@@ -484,4 +484,54 @@ TEST(CommandIngress, StopStillAppliesWhenResultQueueIsFull) {
     ASSERT_TRUE(path.stops.latest(notice));
     EXPECT_EQ(notice.generation, 1U);
     EXPECT_EQ(notice.id, 2U);
+}
+
+domain::Command stop_command(std::uint64_t id, std::uint32_t sequence, domain::Milliseconds now) {
+    auto command = command_for(id, sequence, now, 0);
+    command.type = domain::CommandType::stop;
+    command.enabled = false;
+    return command;
+}
+
+std::vector<domain::CommandResult>
+drain_results(application::BoundedFifo<domain::CommandResult>& results) {
+    std::vector<domain::CommandResult> records;
+    domain::CommandResult result{};
+    while (results.try_pop(result)) {
+        records.push_back(result);
+    }
+    return records;
+}
+
+TEST(CommandRequests, StopIsAppliedOnlyWhenOffWasObserved) {
+    Path<4, 8> path;
+    EXPECT_EQ(path.ingress.submit(stop_command(1, 1, 0), 0), domain::CommandStatus::accepted);
+    EXPECT_FALSE(path.requests.enable_requested(0));
+    path.requests.note_outcome(false, true, 0, domain::AppliedOutput::unknown);
+    const auto failed = drain_results(path.results);
+    ASSERT_EQ(failed.size(), 2U);
+    EXPECT_EQ(failed[0].status, domain::CommandStatus::accepted);
+    EXPECT_EQ(failed[1].id, 1U);
+    EXPECT_EQ(failed[1].status, domain::CommandStatus::not_applied);
+}
+
+TEST(CommandRequests, ObservedOffIsAppliedEvenWhenAFaultIsLatched) {
+    Path<4, 8> path;
+    EXPECT_EQ(path.ingress.submit(stop_command(1, 1, 0), 0), domain::CommandStatus::accepted);
+    EXPECT_FALSE(path.requests.enable_requested(0));
+    path.requests.note_outcome(false, true, 0, domain::AppliedOutput::off);
+    const auto records = drain_results(path.results);
+    ASSERT_EQ(records.size(), 2U);
+    EXPECT_EQ(records[1].status, domain::CommandStatus::applied);
+    EXPECT_EQ(records[1].type, domain::CommandType::stop);
+}
+
+TEST(CommandRequests, StopLeftOnIsNotApplied) {
+    Path<4, 8> path;
+    EXPECT_EQ(path.ingress.submit(stop_command(1, 1, 0), 0), domain::CommandStatus::accepted);
+    EXPECT_FALSE(path.requests.enable_requested(0));
+    path.requests.note_outcome(true, false, 0, domain::AppliedOutput::on);
+    const auto records = drain_results(path.results);
+    ASSERT_EQ(records.size(), 2U);
+    EXPECT_EQ(records[1].status, domain::CommandStatus::not_applied);
 }
