@@ -10,14 +10,22 @@ snapshots, request sources, and failed outputs. They verify missing/stale input,
 fault propagation, failed-stop unknown state, and reporting without ESP-IDF.
 Command tests cover a full queue, invalid and expired commands, duplicates,
 stale sequences, remote rejection, stop while the FIFO is full, and commands
-that cannot override a `TimedOutput` fault.
+that cannot override a `TimedOutput` fault. A stop is `applied` only when the
+control step observed `off`. Quiesce tests submit one local stop and poll
+applied output. They confirm only a newer `off` sample. `unknown`, a sample
+that is still `on`, a deadline, a rejected stop, and an overwritten stop's bare
+`accepted` result are not safe. The helper does not call network `stop` or OTA.
+Envelope tests cover schema 1 decoding, wall-clock conversion, oversize and
+malformed payloads, unknown versions, expiry before `submit`, and a full result
+FIFO rejecting a new enable.
 Settings tests cover unversioned upgrade, schema 1, a newer schema, corrupt and
 partial records, out-of-range values, and empty optional credentials. They call
 `migrate_settings` directly and do not open NVS.
 Network lifecycle tests cover start order, reverse-order stop, a repeated stop,
-Wi-Fi and MQTT init failure, retry after the monotonic delay, and control
-continuing while the network is stopped. Resource-phase transitions are tested
-without ESP-IDF. The Unity application does not run those cases: SDK teardown
+Wi-Fi and MQTT init failure, retry after the monotonic delay, a stalled SNTP
+wait (separate from the wall-clock `ready()` rule), and control continuing
+while the network is stopped. Resource-phase transitions, including a failed
+MQTT or SNTP release, are tested without ESP-IDF. The Unity application does not run those cases: SDK teardown
 needs a board, and the host tests already cover the portable contract.
 Add domain-specific boundary tests when control rules grow.
 

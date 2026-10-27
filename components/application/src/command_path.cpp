@@ -26,6 +26,19 @@ domain::CommandResult make_result(const domain::Command& command, domain::Comman
             at};
 }
 
+// applied only for an observed OFF. A failed write leaves the boolean level false and
+// the acknowledgement unknown; that pair must not be recorded as applied.
+domain::CommandStatus stop_status(bool output_on, bool fault,
+                                  domain::AppliedOutput applied) noexcept {
+    if (fault && applied != domain::AppliedOutput::off) {
+        return domain::CommandStatus::not_applied;
+    }
+    if (applied == domain::AppliedOutput::off && !output_on) {
+        return domain::CommandStatus::applied;
+    }
+    return domain::CommandStatus::not_applied;
+}
+
 } // namespace
 
 CommandIngress::CommandIngress(BoundedFifo<QueuedCommand>& commands,
@@ -62,6 +75,10 @@ domain::CommandStatus CommandIngress::submit(const domain::Command& command,
             return domain::CommandStatus::rejected_invalid;
         }
         ++stop_generation_;
+        // One slot. A newer stop replaces this notice before the control loop sees it.
+        // The replaced command stays accepted and gets no completion record: this mailbox
+        // does not keep the replaced id, and a second completion write would race the
+        // control task. accepted is not a confirmed OFF. See ADR 0008.
         stops_.publish({command.id, command.sequence, command.identity, command.source,
                         stop_generation_, now, command.expires_at});
         remember(command.id);
@@ -165,7 +182,8 @@ bool CommandRequests::enable_requested(domain::Milliseconds now) noexcept {
     return lease_is_current(now);
 }
 
-void CommandRequests::note_outcome(bool enabled, bool, domain::Milliseconds now) noexcept {
+void CommandRequests::note_outcome(bool enabled, bool fault, domain::Milliseconds now,
+                                   domain::AppliedOutput applied) noexcept {
     if (stop_ack_pending_) {
         domain::Command stop{};
         stop.id = stop_ack_.id;
@@ -173,7 +191,7 @@ void CommandRequests::note_outcome(bool enabled, bool, domain::Milliseconds now)
         stop.identity = stop_ack_.identity;
         stop.type = domain::CommandType::stop;
         stop.source = stop_ack_.source;
-        push_result(stop, domain::CommandStatus::applied, now);
+        push_result(stop, stop_status(enabled, fault, applied), now);
         stop_ack_pending_ = false;
     }
     if (!pending_.present) {

@@ -14,9 +14,11 @@ Wi-Fi/broker execution still require the hardware acceptance checks below.
 
 The default firmware still uses synthetic input, simulated output, and no network.
 No GPIO actuator, MQTT command subscription, irrigation automation, or OTA download
-is implemented. A portable command ingress rejects remote commands by default and
-does not open a broker connection. The SHT3x measures air temperature/humidity,
-not soil moisture.
+is implemented. A schema 1 decoder can map one reassembled payload onto the
+command ingress. The default firmware does not call it. Remote commands stay
+rejected unless `ESPKIT_REMOTE_COMMANDS` is enabled, and that option does not
+open a broker connection. The SHT3x measures air temperature/humidity, not soil
+moisture.
 
 ## Build a hardware-enabled configuration
 
@@ -114,7 +116,10 @@ MQTT's reconnect interval has per-device startup jitter; Wi-Fi uses exponential
 backoff with jitter. MQTT outbox storage is limited to 4096 bytes.
 
 A failed station or MQTT `start` releases the resources that attempt acquired and
-retries without rebooting. Stopping the network does not stop sensor or control
+retries without rebooting. A wall clock that never becomes valid for TLS does
+the same after a bounded SNTP wait: the session is stopped and begun again, then
+the stack is released. A release the SDK does not finish stays recorded so the
+next stop can retry it. Stopping the network does not stop sensor or control
 tasks and does not change the output. The TCP/IP stack and the default event loop
 stay initialized across that restart. See
 [ADR 0007](decisions/0007-service-lifecycle.md). Hardware was not used to confirm

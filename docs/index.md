@@ -46,8 +46,9 @@ Status: **pre-alpha**, with hardware acceptance testing still pending.
 Physical actuator drivers, MQTT command subscription, secure provisioning, and OTA
 execution remain [roadmap items](roadmap.md). Stored network settings migrate in
 memory across schema versions and are not rewritten in NVS. Local command admission
-is implemented and defaults to an idle, remote-rejected ingress. OTA partitions are reserved in the
-root firmware, but an updater is not implemented. Cluster coordination and robot
+is implemented and defaults to an idle, remote-rejected ingress. A portable helper
+can confirm applied OFF before a disruptive restart; boot does not call it. OTA
+partitions are reserved in the root firmware, but an updater is not implemented. Cluster coordination and robot
 motion algorithms are not included.
 
 Read [Safety](safety.md) before adding real outputs. A successful build does not

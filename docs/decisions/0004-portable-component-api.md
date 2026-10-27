@@ -1,8 +1,8 @@
 # ADR 0004: Responsibility-based names and portable network coordination
 
 Status: accepted. Updates ADR 0003 naming and network composition.
-The sentence below that keeps initialization failure terminal until reboot is
-superseded by [ADR 0007](0007-service-lifecycle.md).
+Keeping initialization failure terminal until reboot is superseded by
+[ADR 0007](0007-service-lifecycle.md).
 
 ## Decision
 
@@ -13,11 +13,12 @@ Retain `ESPKIT_` Kconfig symbols and the `espkit` NVS namespace/schema for compa
 
 Separate `NvsConfigStore` from portable settings validation. Load settings in the
 composition root before tasks start and configure the network service with a copy.
-Inject Wi-Fi, MQTT, and time readiness through portable ports. Keep initialization
-failure terminal until reboot, as before; retrying partial SDK initialization would
-require a separate resource-cleanup contract. Existing adapter reconnect behavior
-continues after successful initialization. Test startup, TLS gating, and failures
-on the host. Split platform headers by clock, snapshot, log, and task responsibility.
+Inject Wi-Fi, MQTT, and time readiness through portable ports. Keeping
+initialization failure terminal until reboot is superseded by
+[ADR 0007](0007-service-lifecycle.md), which supplies the resource-cleanup
+contract. Existing adapter reconnect behavior continues after successful
+initialization. Test startup, TLS gating, and failures on the host. Split
+platform headers by clock, snapshot, log, and task responsibility.
 
 Host tests link component libraries instead of repeating production source paths.
 Each component lists portable sources once and adds SDK sources only in IDF builds.

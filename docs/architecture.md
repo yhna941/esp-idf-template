@@ -12,11 +12,11 @@ mirror their owning namespace. Check for SDK component collisions when adding na
 | Component | Namespace | Responsibility |
 | --- | --- | --- |
 | `domain` | `domain` | Measurements, status, timed-output policy, and command checks |
-| `application` | `application` | Portable ports, command ingress, and single-step workers |
+| `application` | `application` | Portable ports, command ingress, output quiesce, and single-step workers |
 | `drivers` | `drivers` | Synthetic/SHT3x inputs and simulated output |
 | `platform` | `platform` | ESP-IDF I2C, monotonic clock, FreeRTOS queues/tasks, log sink |
 | `configuration` | `configuration` | Network settings validation, schema migration, and NVS loading |
-| `networking` | `networking` | Wi-Fi lifecycle, MQTT telemetry, and connection coordination |
+| `networking` | `networking` | Wi-Fi lifecycle, MQTT telemetry, command envelopes, and connection coordination |
 | `main/` | `device` | Product selection, board settings, task budgets, and object wiring |
 
 For example, `drivers::Sht3xSensor` is declared in
@@ -60,6 +60,7 @@ This is a lightweight boundary check, not a general C++ dependency analyzer.
 | Producer-consumer | Bounded latest-value queues connect workers |
 | Bounded FIFO with rejection | Command ingress returns a status instead of overwriting or blocking |
 | Separate stop mailbox | A full command FIFO cannot delay `CommandType::stop` |
+| Output quiesce | One local stop, then poll applied output before a disruptive restart |
 | In-memory schema migration | `migrate_settings` upgrades stored network fields without rewriting NVS |
 
 No DI container, service locator, Singleton, generic event bus, or factory hierarchy
@@ -80,18 +81,23 @@ without stopping local control. See [ADR 0007](decisions/0007-service-lifecycle.
 Sensor (500 ms), control (100 ms), and reporter (2000 ms) workers run independently.
 Two length-one FreeRTOS queues carry latest-value snapshots; reads do not consume
 them. Overwrite is intentional. Commands use a separate bounded FIFO that rejects
-when full, plus a one-slot stop notice. `CommandIngress::submit` is single-threaded;
-the FIFO and stop mailbox are the cross-task boundary. The default firmware does
-not call `submit`, so the output request stays off. Startup seeds a reading and
-applies safe OFF before tasks start.
+when full, plus a one-slot stop notice. `CommandIngress::submit` is single-threaded.
+Reassemble a remote payload on that worker before `decode_command_envelope` calls
+`submit`. The FIFO and stop mailbox are the cross-task boundary. A full result
+FIFO rejects a new enable. The default firmware does not call `submit`, so the
+output request stays off. Startup seeds a reading and applies safe OFF before
+tasks start.
 
 `DeviceRuntime` owns `WifiStation`, `SntpTime`, `MqttTelemetry`, and
 `NetworkService` for the boot. `stop` does not destroy those objects. Before any
 tasks start, the composition root loads validated settings through
-`configuration::NvsConfigStore` and passes a copy to `NetworkService::configure()`.
-That call is ignored after the service leaves `disabled`; a later restart reuses
-the owned copy. After startup, only the network task calls `start`, `stop`,
-`step`, and `state`.
+`configuration::NvsConfigStore` and passes a copy to `NetworkService::configure()`
+on the startup thread. That call is accepted from `disabled` and moves the
+service to `starting`. After the network task starts, that task is the only
+caller of `configure`, `start`, `stop`, `step`, and `state`. A later `configure`
+is accepted only from `stopped`: it replaces the owned copy, stays `stopped`
+until `start`, and does not write NVS. There is no second writer. Every other
+state ignores `configure`.
 
 `step` starts Wi-Fi, then SNTP when the URI is `mqtts://`, waits for the link and
 for injected `NetworkTime` readiness, then starts MQTT. `stop` releases in the
@@ -99,6 +105,11 @@ opposite order: MQTT, SNTP, then Wi-Fi. A failed `start` releases the resources
 that stage owns. Wi-Fi bring-up failure releases the whole stack and moves to
 `failed`, which `step` retries after `network_init_retry_ms`. MQTT bring-up
 failure releases only the client and retries it, leaving the station and SNTP up.
+`waiting_for_time` is bounded on the monotonic clock. One SNTP session waits
+`network_init_retry_ms`; on expiry `step` stops SNTP and begins it again. After
+`network_time_session_budget` sessions the bring-up fails like a Wi-Fi `start`
+failure. `NetworkTime::ready()` stays a wall-clock check. A failed MQTT or SNTP
+release leaves that phase in place so the next `stop` or `start` can finish it.
 `stopped` does not retry until `start`. Losing the link after a successful start
 is not `failed`; the station and the MQTT client reconnect on their own.
 
@@ -111,27 +122,33 @@ stop the control task as well.
 
 The reporter calls `NetworkService::report()`, which gates transmission on the
 Wi-Fi link and delegates to MQTT. That call may run while the network task is
-stopping. The MQTT adapter serializes use of the client pointer; Wi-Fi and MQTT
-callbacks only update atomics. MQTT's callback also enqueues retained online
-availability. Config strings remain valid because `NetworkService` owns its
-settings for the boot lifetime.
+stopping. The MQTT adapter serializes use of the client pointer. Wi-Fi and MQTT
+callbacks only update atomics. The network worker enqueues retained online
+availability after the callback records a connection. Config strings remain
+valid because `NetworkService` owns its settings for the boot lifetime.
+Replacing that copy is allowed only from `stopped`, after `stop` has released
+the MQTT client that borrowed the strings.
 
 `NetworkService::stop` does not read the sensor and does not change the output.
-A later operation that needs a quiet actuator, including OTA, has to request safe
-OFF through the command path and observe the applied status first. A failed OFF
-stays unknown. That quiesce sequence is not implemented here. Control never calls
-networking. Telemetry uses bounded nonblocking enqueue with QoS 0 and no offline
-backlog. Sensor bus waits remain on the sensor task. Task budgets require hardware
-measurement; compilation is not timing validation.
+`application::OutputQuiesce` submits one local stop and polls `applied_output`.
+Only a sample newer than that submit, reading `off`, is a confirmed safe output.
+`unknown`, a sample that is still `on`, and a deadline without that sample are
+unsuccessful. The helper does not call network `stop` or OTA, and boot does not
+call the helper. See [ADR 0008](decisions/0008-output-quiesce.md). Control never
+calls networking. Telemetry uses bounded nonblocking enqueue with QoS 0 and no
+offline backlog. Sensor bus waits remain on the sensor task. Task budgets require
+hardware measurement; compilation is not timing validation.
 
 ## Safety and status
 
 `TimedOutput` rejects invalid/stale input and maximum runtime expiry, latching a
 fault. Repeated ON requests cannot extend an interval. The worker applies the
 policy decision; output errors latch fault and trigger a best-effort OFF. Failed
-OFF is reported as unknown, not confirmed OFF. Applied status is software
-acknowledgement, not physical feedback. Cooldowns, duty limits, independent
-interlocks, and hardware watchdog behavior are product responsibilities.
+OFF is reported as unknown, not confirmed OFF. A latched stop is `applied` only
+when that step observed `off`. Applied status is software acknowledgement, not
+physical feedback. Cooldowns, duty limits, independent interlocks, and hardware
+watchdog behavior are product responsibilities. See
+[ADR 0008](decisions/0008-output-quiesce.md).
 
 Physical outputs remain disabled. Remote command sources stay rejected unless
 `ESPKIT_REMOTE_COMMANDS` is enabled, and that option does not subscribe to MQTT.

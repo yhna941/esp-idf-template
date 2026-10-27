@@ -35,7 +35,13 @@ operation may continue. Missing or invalid safety inputs do force a safe state.
 Select these rules explicitly for each product. The starter defaults to OFF.
 
 OTA must quiesce outputs and confirm this before restarting. Network `stop` does
-not do that. The composition root has to request safe OFF through the command
-path and observe the applied status first; a failed OFF stays unknown. See
-[ADR 0007](decisions/0007-service-lifecycle.md). The current partition layout only
-reserves storage; OTA download and health confirmation are not present.
+not do that. `application::OutputQuiesce` submits one local stop and polls
+`Telemetry.applied_output`. The attempt is confirmed only when a sample taken
+after that stop reads `off`. `unknown` and a sample that is still `on` are
+unsuccessful, and so is reaching the deadline without that newer `off` sample.
+A failed OFF stays unknown. The helper does not call network `stop` or
+`esp_ota_*`. An overwritten stop in the one-slot mailbox stays `accepted` and
+has no completion record; `accepted` is not a safe output. See
+[ADR 0008](decisions/0008-output-quiesce.md). The current partition layout only
+reserves storage; OTA download and health confirmation are not present. The
+helper is not called on boot.

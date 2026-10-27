@@ -9,7 +9,8 @@ transport, and reporting implementations can evolve independently. Local work
 can execute without a server. `CommandIngress` validates a command before
 `RequestSource` exposes a boolean request to `TimedOutput`. The ingress is not
 a protocol or proof of distributed safety. MQTT command subscription is not
-implemented; a future adapter calls `submit` and does not write the output.
+implemented. `decode_command_envelope` maps one schema 1 payload onto `submit`
+and does not write the output.
 
 For richer robots, introduce product-specific typed snapshots and actions instead
 of encoding all sensors into one float or all motor commands into one boolean.

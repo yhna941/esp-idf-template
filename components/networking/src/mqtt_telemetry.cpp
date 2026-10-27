@@ -30,6 +30,13 @@ bool MqttTelemetry::start(const configuration::NetworkConfig& config) noexcept {
         }
     }
     stop();
+    {
+        const std::lock_guard<std::mutex> lock(publish_mutex_);
+        // stop() could not finish. Do not create a second client on top of it.
+        if (phase_ != MqttPhase::idle) {
+            return false;
+        }
+    }
     std::snprintf(telemetry_topic_, sizeof(telemetry_topic_), "iot/v1/%s/%s/telemetry",
                   config.site_id, config.device_id);
     std::snprintf(availability_topic_, sizeof(availability_topic_), "iot/v1/%s/%s/availability",
@@ -79,21 +86,65 @@ void MqttTelemetry::stop() noexcept {
         const std::lock_guard<std::mutex> lock(publish_mutex_);
         client = client_.exchange(nullptr);
         phase = phase_;
-        phase_ = MqttPhase::idle;
         mqtt_up_.store(false);
     }
     // Unlock before the SDK calls. stop() can wait for the MQTT task, and that
     // task's callback only reads atomics, so it must not need this mutex.
-    const auto cleanup = mqtt_cleanup(phase);
     if (client == nullptr) {
         return;
     }
+    const auto cleanup = mqtt_cleanup(phase);
+    if (!cleanup.stop_client && !cleanup.destroy_client) {
+        const std::lock_guard<std::mutex> lock(publish_mutex_);
+        client_.store(client);
+        return;
+    }
+    bool stop_succeeded = false;
+    bool destroy_succeeded = false;
     if (cleanup.stop_client) {
-        esp_mqtt_client_stop(client);
+        const auto stopped = esp_mqtt_client_stop(client);
+        stop_succeeded = stopped == ESP_OK;
+        if (!stop_succeeded) {
+            ESP_LOGW(tag, "esp_mqtt_client_stop failed: %s", esp_err_to_name(stopped));
+        }
     }
-    if (cleanup.destroy_client) {
-        esp_mqtt_client_destroy(client);
+    if ((!cleanup.stop_client || stop_succeeded) && cleanup.destroy_client) {
+        const auto destroyed = esp_mqtt_client_destroy(client);
+        destroy_succeeded = destroyed == ESP_OK;
+        if (!destroy_succeeded) {
+            ESP_LOGW(tag, "esp_mqtt_client_destroy failed: %s", esp_err_to_name(destroyed));
+        }
     }
+    const auto next = mqtt_phase_after_release(phase, stop_succeeded, destroy_succeeded);
+    const std::lock_guard<std::mutex> lock(publish_mutex_);
+    phase_ = next;
+    if (next == MqttPhase::idle) {
+        availability_epoch_.store(0);
+        availability_published_ = 0;
+        mqtt_up_.store(false);
+        return;
+    }
+    // The release did not finish. Keep the handle so the next stop can retry.
+    client_.store(client);
+#endif
+}
+
+void MqttTelemetry::publish_availability() noexcept {
+#if CONFIG_ESPKIT_NETWORK_ENABLED
+    const auto epoch = availability_epoch_.load();
+    if (epoch == availability_published_) {
+        return;
+    }
+    const std::lock_guard<std::mutex> lock(publish_mutex_);
+    const auto client = client_.load();
+    const auto current = availability_epoch_.load();
+    if (client == nullptr || !mqtt_up_.load() || current == availability_published_) {
+        return;
+    }
+    if (esp_mqtt_client_enqueue(client, availability_topic_, "online", 0, 1, 1, true) < 0) {
+        return;
+    }
+    availability_published_ = current;
 #endif
 }
 
@@ -101,10 +152,7 @@ void MqttTelemetry::event(void* context, esp_event_base_t, std::int32_t id, void
     auto& self = *static_cast<MqttTelemetry*>(context);
     if (id == MQTT_EVENT_CONNECTED) {
         self.mqtt_up_.store(true);
-        const auto client = self.client_.load();
-        if (client != nullptr) {
-            esp_mqtt_client_enqueue(client, self.availability_topic_, "online", 0, 1, 1, true);
-        }
+        self.availability_epoch_.fetch_add(1);
         ESP_LOGI(tag, "MQTT connected");
     } else if (id == MQTT_EVENT_DISCONNECTED || id == MQTT_EVENT_ERROR) {
         self.mqtt_up_.store(false);
